@@ -114,6 +114,13 @@ def main(rank: int, world_size: int, total_epochs: int, batch_size: int, save_ev
 
     ddp_setup(rank, world_size)
     logging.info(f'process rank {rank}')
+
+    # instantiate a model as per normal
+    # the dnCNN is a simple conv net for image denoising, 
+    # takes a noisy 3 channel image as input, 
+    # expects a clean 3 channel image as output
+    # the model will be wrapped inside DDP when instantiating the Trainer class
+    
     model = DnCNN(num_layers=17, num_features=64)
     
     if (rank == 0):
