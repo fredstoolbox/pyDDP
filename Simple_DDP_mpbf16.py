@@ -8,6 +8,9 @@ from torch.distributed.optim import ZeroRedundancyOptimizer
 from torch.distributed import init_process_group, destroy_process_group
 import torch
 
+# --mix precision --
+from torch.autograd import grad as torch_grad
+from torch.amp import autocast, GradScaler
 
 import os
 import sys
@@ -51,19 +54,25 @@ class Trainer:
         # wrap the model with DDP, then use the wrapped model for training
         self.ddp_model = DDP(self.model, device_ids=[gpu_id])
         self.optimizer = ZeroRedundancyOptimizer(self.ddp_model.parameters(),  optimizer_class=torch.optim.Adam, lr=0.01)
-     
+        self.scaler = GradScaler() #for mixed precision training
     
     #run a single batch
     def _run_batch(self, source, targets, stepindex):
-     
-        output = self.ddp_model(source)
-        loss = self.L1_loss(output, targets) / accumulate_gradient_iter
+        with autocast(device_type='cuda', dtype=torch.bfloat16):
+            output = self.ddp_model(source)
+            loss = self.L1_loss(output, targets) / accumulate_gradient_iter
             #backward is called every batch
-        loss.backward()
+        self.scaler.scale(loss).backward()
 
         #only step optimizer every accumulate_gradient_iter
         if(stepindex+1) % accumulate_gradient_iter == 0:
-            self.optimizer.step()
+            # fp32 way of optimizer step
+#            self.optimizer.step()
+#            self.optimizer.zero_grad()
+
+            # mixed precision way of optimizer step
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
             self.optimizer.zero_grad()
  
         
