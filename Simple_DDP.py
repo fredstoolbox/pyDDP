@@ -56,15 +56,19 @@ class Trainer:
     #run a single batch
     def _run_batch(self, source, targets, stepindex):
      
-        output = self.ddp_model(source)
-        loss = self.L1_loss(output, targets) / accumulate_gradient_iter
-            #backward is called every batch
-        loss.backward()
-
         #only step optimizer every accumulate_gradient_iter
         if(stepindex+1) % accumulate_gradient_iter == 0:
+            output = self.ddp_model(source)
+            loss = self.L1_loss(output, targets) / accumulate_gradient_iter
+            #backward is called every batch
+            loss.backward()
             self.optimizer.step()
             self.optimizer.zero_grad()
+        else:   #skip gradient sync to save bandwidth when not stepping optimizer
+            with self.ddp_model.no_sync():
+                output = self.ddp_model(source)
+                loss = self.L1_loss(output, targets) / accumulate_gradient_iter
+                loss.backward()
  
         
     #run an epoch
