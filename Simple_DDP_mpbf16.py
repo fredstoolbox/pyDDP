@@ -74,7 +74,42 @@ class Trainer:
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.optimizer.zero_grad()
- 
+
+    #data validation runs on all rank, val_loader is a data loader with distributed sampler, calculate the average loss across the whole validation dataset, and synchronize the result across all processes
+    def validate(self, model, val_loader, criterion, device, world_size):
+        model.eval()
+        # Use torch.no_grad() to disable gradient calculations during validation
+        with torch.no_grad():
+            total_loss = 0.0
+            # Counter for the total number of samples processed by this rank
+            num_samples = 0
+
+            for inputs, labels in val_loader:
+                inputs, labels = inputs.to(device), labels.to(device)
+
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+
+                # Accumulate loss and count samples
+                # Use the batch size (size(0)) to weight the loss correctly when accumulating
+                batch_size = inputs.size(0)
+                total_loss += loss.item() * batch_size
+                num_samples += batch_size
+            
+            # Convert accumulated loss and sample count to tensors
+            total_loss_tensor = torch.tensor(total_loss).to(device)
+            num_samples_tensor = torch.tensor(num_samples).to(device)
+
+            # All-reduce the total loss and sample count across all GPUs
+            # This synchronizes the accumulated metrics from all processes
+            torch.distributed.all_reduce(total_loss_tensor, op=torch.distributed.ReduceOp.SUM)
+            torch.distributed.all_reduce(num_samples_tensor, op=torch.distributed.ReduceOp.SUM)
+
+            # Calculate the final average validation loss
+            # The result is the global average loss across all data samples
+            global_avg_loss = total_loss_tensor.item() / num_samples_tensor.item()
+
+            return global_avg_loss
         
     #run an epoch
     def _run_epoch(self, epoch, train_data:DataLoader):
